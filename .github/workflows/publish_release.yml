@@ -41,6 +41,11 @@ jobs:
         run: |
           sudo make versions_prepare check_environment
 
+      - name: Compile Harbor binaries
+        run: |
+          sudo make compile \
+            GOBUILDTAGS="include_oss include_gcs"
+
       - name: Build Harbor Images
         run: |
           sudo make build \
