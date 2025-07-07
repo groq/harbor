@@ -37,6 +37,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Prepare Build Environment
+        run: |
+          sudo make versions_prepare check_environment
+
       - name: Build Harbor Images
         run: |
           sudo make build \

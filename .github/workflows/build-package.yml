@@ -57,7 +57,11 @@ jobs:
           echo "HARBOR_BUILD_BASE_TAG=$Harbor_Build_Base_Tag" >> $GITHUB_ENV
           echo "TARGET_BRANCH=$target_branch" >> $GITHUB_ENV
           echo "REGISTRY_PREFIX=${{ env.REGISTRY }}/${{ github.repository }}/" >> $GITHUB_ENV
-          
+
+      - name: Prepare Build Environment
+        run: |
+          sudo make versions_prepare check_environment
+
       - name: Build Harbor Images
         run: |
           sudo make build \
