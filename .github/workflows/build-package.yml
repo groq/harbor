@@ -39,7 +39,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/checkout@v3
         with:
-          path: src/github.com/goharbor/harbor
+          path: src/github.com/groq/harbor
       - name: Build Base Image
         if: |
             contains(steps.changed-files.outputs.modified, 'Dockerfile.base') ||
@@ -81,7 +81,7 @@ jobs:
           fi
 
           build_base_params=" BUILD_BASE=false"
-          cd src/github.com/goharbor/harbor
+          cd src/github.com/groq/harbor
           if [ -z "$BUILD_BASE"  ] || [ "$BUILD_BASE" != "true"  ]; then
             echo "Do not need to build base images!"
           else
