@@ -48,10 +48,10 @@ type remoteHelper struct {
 }
 
 // NewRemoteHelper create a remote interface
-func NewRemoteHelper(ctx context.Context, regID int64, opts ...Option) (RemoteInterface, error) {
+func NewRemoteHelper(ctx context.Context, regID int64, mgr reg.Manager, opts ...Option) (RemoteInterface, error) {
 	r := &remoteHelper{
 		regID:       regID,
-		registryMgr: reg.Mgr,
+		registryMgr: mgr,
 		opts:        NewOptions(opts...),
 	}
 	if err := r.init(ctx); err != nil {
