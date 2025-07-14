@@ -81,6 +81,8 @@ require (
 	sigs.k8s.io/yaml v1.4.0
 )
 
+require github.com/mattn/go-sqlite3 v1.14.22
+
 require (
 	cloud.google.com/go/compute/metadata v0.5.2 // indirect
 	github.com/Azure/azure-sdk-for-go v37.2.0+incompatible // indirect

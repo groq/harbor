@@ -24,6 +24,7 @@ import (
 
 	"github.com/docker/distribution"
 	"github.com/opencontainers/go-digest"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/blob"
@@ -31,12 +32,16 @@ import (
 	"github.com/goharbor/harbor/src/controller/tag"
 	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/cache"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/orm"
 	proModels "github.com/goharbor/harbor/src/pkg/project/models"
+	"github.com/goharbor/harbor/src/pkg/reg"
 	model_tag "github.com/goharbor/harbor/src/pkg/tag/model/tag"
 )
+
+
 
 const (
 	// wait more time than manifest (maxManifestWait) because manifest list depends on manifest ready
@@ -51,6 +56,12 @@ var (
 	// Ctl is a global proxy controller instance
 	ctl  Controller
 	once sync.Once
+
+	// manifestGroup handles singleflight for manifest requests
+	manifestGroup singleflight.Group
+
+	// blobGroup handles singleflight for blob requests
+	blobGroup singleflight.Group
 )
 
 // Controller defines the operations related with pull through proxy
@@ -61,7 +72,7 @@ type Controller interface {
 	UseLocalManifest(ctx context.Context, art lib.ArtifactInfo, remote RemoteInterface) (bool, *ManifestList, error)
 	// ProxyBlob proxy the blob request to the remote server, p is the proxy project
 	// art is the ArtifactInfo which includes the digest of the blob
-	ProxyBlob(ctx context.Context, p *proModels.Project, art lib.ArtifactInfo) (int64, io.ReadCloser, error)
+	ProxyBlob(ctx context.Context, p *proModels.Project, art lib.ArtifactInfo, mgr reg.Manager) (int64, io.ReadCloser, error)
 	// ProxyManifest proxy the manifest request to the remote server, p is the proxy project,
 	// art is the ArtifactInfo which includes the tag or digest of the manifest
 	ProxyManifest(ctx context.Context, art lib.ArtifactInfo, remote RemoteInterface) (distribution.Manifest, error)
@@ -212,47 +223,59 @@ func manifestListContentTypeKey(rep string, art lib.ArtifactInfo) string {
 }
 
 func (c *controller) ProxyManifest(ctx context.Context, art lib.ArtifactInfo, remote RemoteInterface) (distribution.Manifest, error) {
-	var man distribution.Manifest
 	remoteRepo := getRemoteRepo(art)
 	ref := getReference(art)
-	man, dig, err := remote.Manifest(remoteRepo, ref)
-	if err != nil {
-		return man, err
-	}
-	ct, _, err := man.Payload()
-	if err != nil {
-		return man, err
-	}
+	artifactKey := remoteRepo + ":" + ref
 
-	// Push manifest in background
-	go func(operator string) {
-		bCtx := orm.Copy(ctx)
-		a, err := c.local.GetManifest(bCtx, art)
+	// This singleflight group is used to deduplicate concurrent manifest requests
+	result, err, _ := manifestGroup.Do(artifactKey, func() (any, error) {
+		log.Debugf("Fetching manifest from remote registry, url:%v", remoteRepo)
+
+		man, dig, err := remote.Manifest(remoteRepo, ref)
 		if err != nil {
-			log.Errorf("failed to get manifest, error %v", err)
+			return nil, err
 		}
-		// Push manifest to local when pull with digest, or artifact not found, or digest mismatch
-		if len(art.Tag) == 0 || a == nil || a.Digest != dig {
-			artInfo := art
-			if len(artInfo.Digest) == 0 {
-				artInfo.Digest = dig
-			}
-			c.waitAndPushManifest(bCtx, remoteRepo, man, artInfo, ct, remote)
+		ct, _, err := man.Payload()
+		if err != nil {
+			return nil, err
 		}
 
-		// Query artifact after push
-		if a == nil {
-			a, err = c.local.GetManifest(bCtx, art)
+		// Push manifest in background
+		go func(operator string) {
+			bCtx := orm.Copy(ctx)
+			a, err := c.local.GetManifest(bCtx, art)
 			if err != nil {
 				log.Errorf("failed to get manifest, error %v", err)
 			}
-		}
-		if a != nil {
-			SendPullEvent(bCtx, a, art.Tag, operator)
-		}
-	}(operator.FromContext(ctx))
+			// Push manifest to local when pull with digest, or artifact not found, or digest mismatch
+			if len(art.Tag) == 0 || a == nil || a.Digest != dig {
+				artInfo := art
+				if len(artInfo.Digest) == 0 {
+					artInfo.Digest = dig
+				}
+				c.waitAndPushManifest(bCtx, remoteRepo, man, artInfo, ct, remote)
+			}
 
-	return man, nil
+			// Query artifact after push
+			if a == nil {
+				a, err = c.local.GetManifest(bCtx, art)
+				if err != nil {
+					log.Errorf("failed to get manifest, error %v", err)
+				}
+			}
+			if a != nil {
+				SendPullEvent(bCtx, a, art.Tag, operator)
+			}
+		}(operator.FromContext(ctx))
+
+		return man, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.(distribution.Manifest), nil
 }
 
 func (c *controller) HeadManifest(_ context.Context, art lib.ArtifactInfo, remote RemoteInterface) (bool, *distribution.Descriptor, error) {
@@ -261,10 +284,24 @@ func (c *controller) HeadManifest(_ context.Context, art lib.ArtifactInfo, remot
 	return remote.ManifestExist(remoteRepo, ref)
 }
 
-func (c *controller) ProxyBlob(ctx context.Context, p *proModels.Project, art lib.ArtifactInfo) (int64, io.ReadCloser, error) {
+func (c *controller) ProxyBlob(ctx context.Context, p *proModels.Project, art lib.ArtifactInfo, mgr reg.Manager) (int64, io.ReadCloser, error) {
 	remoteRepo := getRemoteRepo(art)
+
+	// Check if async local caching is enabled
+	if config.EnableAsyncLocalCaching() {
+		// Use original async caching behavior (no singleflight)
+		return c.proxyBlobAsync(ctx, p, art, mgr, remoteRepo)
+	} else {
+		// Use synchronous caching with singleflight for ensureBlobCached
+		artifactKey := remoteRepo + ":" + art.Digest
+		return c.proxyBlobSync(ctx, p, art, mgr, remoteRepo, artifactKey)
+	}
+}
+
+func (c *controller) proxyBlobAsync(ctx context.Context, p *proModels.Project, art lib.ArtifactInfo, mgr reg.Manager, remoteRepo string) (int64, io.ReadCloser, error) {
+	// Original async implementation - direct proxy without singleflight
 	log.Debugf("The blob doesn't exist, proxy the request to the target server, url:%v", remoteRepo)
-	rHelper, err := NewRemoteHelper(ctx, p.RegistryID, WithSpeed(p.ProxyCacheSpeed()))
+	rHelper, err := NewRemoteHelper(ctx, p.RegistryID, mgr, WithSpeed(p.ProxyCacheSpeed()))
 	if err != nil {
 		return 0, nil, err
 	}
@@ -282,6 +319,57 @@ func (c *controller) ProxyBlob(ctx context.Context, p *proModels.Project, art li
 		}
 	}()
 	return size, bReader, nil
+}
+
+func (c *controller) proxyBlobSync(ctx context.Context, p *proModels.Project, art lib.ArtifactInfo, mgr reg.Manager, remoteRepo string, artifactKey string) (int64, io.ReadCloser, error) {
+	// Use singleflight for ensureBlobCached to avoid concurrent remote requests
+	_, err, _ := blobGroup.Do(artifactKey, func() (any, error) {
+		return nil, c.ensureBlobCached(ctx, p, art, mgr, remoteRepo)
+	})
+
+	if err != nil {
+		return 0, nil, err
+	}
+
+	// Now read from local cache
+	return c.readBlobFromLocal(ctx, art)
+}
+
+func (c *controller) ensureBlobCached(ctx context.Context, p *proModels.Project, art lib.ArtifactInfo, mgr reg.Manager, remoteRepo string) error {
+	// Check if blob exists in local cache
+	exist, err := c.local.BlobExist(ctx, art)
+	if err != nil {
+		return err
+	}
+	if exist {
+		return nil
+	}
+
+	log.Debugf("Blob not cached, fetching from remote and caching synchronously, url:%v", remoteRepo)
+
+	rHelper, err := NewRemoteHelper(ctx, p.RegistryID, mgr, WithSpeed(p.ProxyCacheSpeed()))
+	if err != nil {
+		return err
+	}
+
+	size, bReader, err := rHelper.BlobReader(remoteRepo, art.Digest)
+	if err != nil {
+		log.Errorf("failed to pull blob, error %v", err)
+		return err
+	}
+	defer bReader.Close()
+
+	desc := distribution.Descriptor{Size: size, Digest: digest.Digest(art.Digest)}
+	return c.putBlobToLocal(remoteRepo, art.Repository, desc, rHelper)
+}
+
+func (c *controller) readBlobFromLocal(ctx context.Context, art lib.ArtifactInfo) (int64, io.ReadCloser, error) {
+	// Get local registry client and read blob directly
+	rHelper := newLocalHelper()
+	
+	// Use the local registry client to pull the blob
+	localRegistryClient := rHelper.(*localHelper).registry
+	return localRegistryClient.PullBlob(art.Repository, art.Digest)
 }
 
 func (c *controller) putBlobToLocal(remoteRepo string, localRepo string, desc distribution.Descriptor, r RemoteInterface) error {
