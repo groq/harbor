@@ -46,7 +46,7 @@ jobs:
         with:
            go-version: 1.23.2
         id: go
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
          path: src/github.com/groq/harbor
       - name: setup env
@@ -117,7 +117,7 @@ jobs:
         with:
           go-version: 1.23.2
         id: go
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           path: src/github.com/groq/harbor
       - name: setup env
@@ -182,7 +182,7 @@ jobs:
         with:
           go-version: 1.23.2
         id: go
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           path: src/github.com/groq/harbor
       - name: setup env
@@ -247,7 +247,7 @@ jobs:
         with:
           go-version: 1.23.2
         id: go
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           path: src/github.com/groq/harbor
       - name: setup env
@@ -310,7 +310,7 @@ jobs:
         with:
           go-version: 1.23.2
         id: go
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           path: src/github.com/groq/harbor
       - name: setup env
@@ -370,7 +370,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '18'
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           path: src/github.com/groq/harbor
       - name: script
