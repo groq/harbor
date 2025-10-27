@@ -94,7 +94,7 @@ jobs:
           files: ./src/github.com/groq/harbor/profile.cov
           flags: unittests
       - name: Upload test artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: apitest-db-outputs
@@ -159,7 +159,7 @@ jobs:
           bash ./tests/showtime.sh ./tests/ci/api_run.sh DB $IP
           df -h
       - name: Upload test artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: apitest-db-outputs
@@ -224,7 +224,7 @@ jobs:
           bash ./tests/showtime.sh ./tests/ci/api_run.sh PROXY_CACHE $IP
           df -h
       - name: Upload test artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: apitest-db-outputs
@@ -287,7 +287,7 @@ jobs:
           bash ./tests/showtime.sh ./tests/ci/api_run.sh LDAP $IP
           df -h
       - name: Upload test artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: apitest-db-outputs
@@ -349,7 +349,7 @@ jobs:
           bash ./tests/showtime.sh ./tests/ci/distro_installer.sh
           df -h
       - name: Upload test artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: apitest-db-outputs
@@ -386,7 +386,7 @@ jobs:
           files: ./src/github.com/groq/harbor/src/portal/coverage/lcov.info
           flags: unittests
       - name: Upload test artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: apitest-db-outputs
