@@ -18,7 +18,7 @@ jobs:
       packages: write
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-release'))
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup env
         run: |
           if [ "${{ github.event_name }}" == "pull_request" ]; then
